@@ -2,9 +2,18 @@ from flask import Flask, render_template, request, jsonify
 import joblib
 import re
 import string
+import os
+import nltk
 
 from nltk.corpus import stopwords
 from nltk.stem import PorterStemmer
+
+# Download stopwords if they are not already available
+try:
+    stop_words = set(stopwords.words("english"))
+except LookupError:
+    nltk.download("stopwords")
+    stop_words = set(stopwords.words("english"))
 
 app = Flask(__name__)
 
@@ -13,23 +22,24 @@ model = joblib.load("model/model.pkl")
 vectorizer = joblib.load("model/vectorizer.pkl")
 
 stemmer = PorterStemmer()
-stop_words = set(stopwords.words("english"))
 
 
 def clean_text(text):
-
     text = text.lower()
 
+    # Remove URLs
     text = re.sub(r"http\S+", "", text)
 
+    # Remove numbers
     text = re.sub(r"\d+", "", text)
 
-    text = text.translate(
-        str.maketrans("", "", string.punctuation)
-    )
+    # Remove punctuation
+    text = text.translate(str.maketrans("", "", string.punctuation))
 
+    # Tokenize
     words = text.split()
 
+    # Remove stopwords and stem
     words = [
         stemmer.stem(word)
         for word in words
@@ -46,32 +56,42 @@ def home():
 
 @app.route("/predict", methods=["POST"])
 def predict():
+    try:
+        data = request.get_json()
 
-    data = request.get_json()
+        if not data or "message" not in data:
+            return jsonify({
+                "prediction": "Error",
+                "confidence": 0,
+                "message": "No message received."
+            }), 400
 
-    message = data["message"]
+        message = data["message"]
 
-    cleaned = clean_text(message)
+        cleaned = clean_text(message)
 
-    vector = vectorizer.transform([cleaned])
+        vector = vectorizer.transform([cleaned])
 
-    prediction = model.predict(vector)[0]
+        prediction = model.predict(vector)[0]
 
-    probability = model.predict_proba(vector)[0]
+        probability = model.predict_proba(vector)[0]
 
-    confidence = round(max(probability) * 100, 2)
+        confidence = round(max(probability) * 100, 2)
 
-    if prediction == 1:
-        result = "Spam"
-    else:
-        result = "Not Spam"
+        result = "Spam" if prediction == 1 else "Not Spam"
 
-    return jsonify({
-        "prediction": result,
-        "confidence": confidence
-    })
+        return jsonify({
+            "prediction": result,
+            "confidence": confidence
+        })
 
-import os
+    except Exception as e:
+        return jsonify({
+            "prediction": "Error",
+            "confidence": 0,
+            "message": str(e)
+        }), 500
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
